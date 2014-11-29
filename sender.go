@@ -9,6 +9,7 @@ import (
 	"github.com/dtynn/dmail/dns"
 	"github.com/dtynn/dmail/message"
 	"github.com/dtynn/dmail/smtp"
+	"github.com/qiniu/log"
 )
 
 var (
@@ -21,53 +22,59 @@ const (
 	defaultContentType       = "text/html"
 )
 
-type Sender struct {
+type senderConfig struct {
 	from      string
 	local     string
 	retry     int
 	encoding  message.Encoding
 	charset   message.Charset
 	enableTls bool
-	dkimConf  *dkim.DkimConf
-	dnsCache  *safeMap
+}
+
+func NewSenderConfig(from string, retry int, encoding message.Encoding, charset message.Charset, enableTls bool) (*senderConfig, error) {
+	pieces := strings.Split(from, "@")
+	if len(pieces) != 2 || pieces[0] == "" || pieces[1] == "" {
+		return nil, errInvalidFromAddress
+	}
+	return &senderConfig{from, pieces[1], retry, encoding, charset, enableTls}, nil
+}
+
+func NewDefaultSenderConfig(from string, retry int, enableTls bool) (*senderConfig, error) {
+	return NewSenderConfig(from, retry, message.Base64, message.CharsetUTF8, enableTls)
+}
+
+type Sender struct {
+	conf     *senderConfig
+	dkimConf *dkim.DkimConf
+	dnsCache *safeMap
 }
 
 type fail struct {
 	Email, Detail string
 }
 
-func NewDefaultSender(from string, retry int, enableTls bool) (*Sender, error) {
-	return NewSender(from, retry, message.Base64, message.CharsetUTF8, false, nil)
-}
-
-func NewSender(from string, retry int,
-	encoding message.Encoding, charset message.Charset,
-	enableTls bool, dkimConf *dkim.DkimConf) (*Sender, error) {
-	pieces := strings.Split(from, "@")
-	if len(pieces) != 2 || pieces[0] == "" || pieces[1] == "" {
-		return nil, errInvalidFromAddress
-	}
-
+func NewSender(conf *senderConfig, dkimConf *dkim.DkimConf) *Sender {
 	s := Sender{
-		from:      from,
-		local:     pieces[1],
-		retry:     retry,
-		encoding:  encoding,
-		charset:   charset,
-		enableTls: enableTls,
-		dkimConf:  dkimConf,
-		dnsCache:  NewSafeMap(),
+		conf:     conf,
+		dkimConf: dkimConf,
+		dnsCache: NewSafeMap(),
 	}
-	return &s, nil
+	return &s
 }
 
-func (this *Sender) Send(mail *Mail) ([]*fail, error) {
-	msg := message.NewMessage(this.encoding, this.charset, mail.ContentType)
+func (this *Sender) Send(to []string, subject string, body string) error {
+	mail := NewMail(defaultContentType, to, subject, body)
+	_, err := this.SendMail(mail)
+	return err
+}
+
+func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
+	msg := message.NewMessage(this.conf.encoding, this.conf.charset, mail.ContentType)
 	msg.AddContentType()
 	msg.AddTransferEncodingHeader()
 	msg.AddDate()
 
-	msg.AddAddressHeader("From", this.from, "")
+	msg.AddAddressHeader("From", this.conf.from, "")
 	for _, t := range mail.To {
 		msg.AddAddressHeader("To", t, "")
 	}
@@ -120,7 +127,7 @@ func (this *Sender) send(hostname string, to []string, msg []byte) error {
 	addr := fmt.Sprintf("%s:%d", host, smtp.DefaultPort)
 
 	var tlsConfig *tls.Config
-	if this.enableTls {
+	if this.conf.enableTls {
 		tlsConfig = &tls.Config{
 			ServerName: hostname,
 		}
@@ -128,5 +135,11 @@ func (this *Sender) send(hostname string, to []string, msg []byte) error {
 		tlsConfig = nil
 	}
 
-	return smtp.SendEmail(addr, this.local, this.from, to, msg, tlsConfig)
+	log.Info("send: addr ", addr)
+	log.Info("send: local ", this.conf.local)
+	log.Info("send: from ", this.conf.from)
+	log.Info("send: to ", to)
+	log.Info("send: msg ", string(msg))
+	log.Info("send: tls", tlsConfig)
+	return smtp.SendEmail(addr, this.conf.local, this.conf.from, to, msg, tlsConfig)
 }
