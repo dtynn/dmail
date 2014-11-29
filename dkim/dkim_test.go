@@ -1,10 +1,12 @@
-package dmail
+package dkim
 
 import (
 	"testing"
+
+	"github.com/dtynn/dmail/message"
 )
 
-var pemBytes = []byte(
+var testPrivateKey = []byte(
 	`-----BEGIN RSA PRIVATE KEY-----
 MIICXAIBAAKBgQC8LDUi99u+LOhD/T4QYh4xjaf//wx6eOgM8YhAHzSYywIscehI
 k/7YXoZwIYvXT1eQCG5RSV7N+bp5IcGZ96tyXfMjUWvEJtLmrOBjMeKtlSqzBIih
@@ -24,7 +26,7 @@ aGuSbLZpX/EcVR3d3yd+uSF52fuamuZK7nQo5Y1AEqo=
 func TestSign(t *testing.T) {
 	res := "v=1; a=rsa-sha256; c=relaxed/simple; d=dtynn.me; i=@dtynn.me; \r\n q=dns/txt; s=abc; t=1416912369; h=From : To : Subject : to : To : \r\n subject : Subject : to : From : Subject : subject : Subject; \r\n bh=P/65m6skPz/Wri2VBU/j1ViQK3o7hPVzpfeEh4cYpKw=; \r\n b=ESVTjf/jN4czA3Vx3B1T6rwuDl9H3M7mfKA9WsfXUNSSC6XV2auGIYXXDzdo1qYmsU8Uj/\r\n HbcMALpMFtHphgaPSTwp9sK9ieptXrs5XamnomZTGXG75JmWoidyaL0UiQpkmFG6BFEfS3BW\r\n TYbfr26LT3ATKGc1M76rx6HQ3N56M="
 
-	msg := NewMessage(Unencoded, CharsetUTF8)
+	msg := message.NewMessage(message.Unencoded, message.CharsetUTF8, "")
 	msg.AddNormalHeader("From", "a")
 	msg.AddNormalHeader("To", "b")
 	msg.AddNormalHeader("Subject", "c")
@@ -38,10 +40,11 @@ func TestSign(t *testing.T) {
 	body := "\r\nabc\r\nabc\r\n\r\n"
 	msg.SetBody(body)
 
-	d := NewDefaultDkim(msg, "dtynn.me", "", "abc", false)
+	conf := NewDkimConf("dtynn.me", "", "abc", false, testPrivateKey)
+	d := NewDefaultDkim(msg, conf)
 	d.t = int64(1416912369)
 
-	sig, err := d.Sign(pemBytes)
+	sig, err := d.Sign()
 	if err != nil {
 		t.Error("sign err: ", err)
 		return

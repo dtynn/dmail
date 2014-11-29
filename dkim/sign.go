@@ -1,4 +1,4 @@
-package dmail
+package dkim
 
 import (
 	"crypto"

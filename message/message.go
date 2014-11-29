@@ -1,10 +1,11 @@
-package dmail
+package message
 
 import (
 	"bytes"
 	"encoding/base64"
 	"time"
 
+	"github.com/dtynn/dmail/utils"
 	"gopkg.in/alexcesaro/quotedprintable.v1"
 )
 
@@ -22,20 +23,22 @@ const (
 )
 
 type Message struct {
-	headers []header
+	headers []Header
 	body    string
 
-	charset  Charset
-	encoding Encoding
+	charset     Charset
+	encoding    Encoding
+	contentType string
 
 	hEncoder *quotedprintable.HeaderEncoder
 }
 
-func NewMessage(encoding Encoding, charset Charset) *Message {
+func NewMessage(encoding Encoding, charset Charset, contentType string) *Message {
 	m := Message{
-		headers:  make([]header, 0),
-		charset:  charset,
-		encoding: encoding,
+		headers:     make([]Header, 0),
+		charset:     charset,
+		encoding:    encoding,
+		contentType: contentType,
 	}
 
 	var e quotedprintable.Encoding
@@ -49,20 +52,20 @@ func NewMessage(encoding Encoding, charset Charset) *Message {
 	return &m
 }
 
-func (this *Message) AddHeader(h header) {
+func (this *Message) AddHeader(h Header) {
 	this.headers = append(this.headers, h)
 }
 
 func (this *Message) AddNormalHeader(field, value string) {
-	this.AddHeader(&normalHeader{strip(field), this.encodeHeader(value)})
+	this.AddHeader(&NormalHeader{utils.Strip(field), this.encodeHeader(value)})
 }
 
 func (this *Message) AddAddressHeader(field, address, name string) {
-	this.AddHeader(&addressHeader{strip(field), address, this.encodeHeader(name)})
+	this.AddHeader(&AddressHeader{utils.Strip(field), address, this.encodeHeader(name)})
 }
 
 func (this *Message) AddDateHeader(field string, date time.Time) {
-	this.AddHeader(&dateHeader{strip(field), date})
+	this.AddHeader(&DateHeader{utils.Strip(field), date})
 }
 
 func (this *Message) encodeHeader(value string) string {
@@ -73,12 +76,21 @@ func (this *Message) SetBody(body string) {
 	this.body = body
 }
 
-func (this *Message) AddContentType(contentType string) {
-	this.AddNormalHeader("Content-Type", contentType+"; charset="+string(this.charset))
+func (this *Message) AddContentType() {
+	this.AddNormalHeader("Content-Type", this.contentType+"; charset="+string(this.charset))
 }
 
 func (this *Message) AddTransferEncodingHeader() {
 	this.AddNormalHeader("Content-Transfer-Encoding", string(this.encoding))
+}
+
+func (this *Message) AddDate() {
+	now := time.Now()
+	this.AddDateHeader("Date", now)
+}
+
+func (this *Message) Headers() []Header {
+	return this.headers
 }
 
 func (this *Message) EncodeBody() []byte {

@@ -1,4 +1,4 @@
-package dmail
+package dkim
 
 import (
 	"crypto/sha1"
@@ -6,10 +6,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash"
-	"math/rand"
 	"regexp"
 	"strings"
-	"time"
 )
 
 // header  \s \t \n
@@ -89,44 +87,10 @@ func stringIn(val string, slice []string) bool {
 	return false
 }
 
-func strip(s string) string {
-	return strings.TrimFunc(s, isBlank)
-}
-
-func rstrip(s string) string {
-	return strings.TrimRightFunc(s, isBlank)
-}
-
-func lstrip(s string) string {
-	return strings.TrimLeftFunc(s, isBlank)
-}
-
-func isBlank(r rune) bool {
-	return reBlank.Match([]byte{byte(r)})
-}
-
 func makeDkimTag(name string, value string) string {
 	return fmt.Sprintf("%s=%s", name, value)
 }
 
 func cutBTag(src string) string {
 	return reBTag.ReplaceAllString(src, "$1")
-}
-
-func RandString(l int) string {
-	rand.Seed(time.Now().UnixNano())
-	data := make([]byte, l)
-	var num int
-	for i := 0; i < l; i++ {
-		num = rand.Intn(75) + 48
-		for {
-			if (num > 57 && num < 65) || (num > 90 && num < 97) {
-				num = rand.Intn(75) + 48
-			} else {
-				break
-			}
-		}
-		data[i] = byte(num)
-	}
-	return string(data)
 }

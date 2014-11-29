@@ -1,4 +1,8 @@
-package dmail
+package dkim
+
+import (
+	"github.com/dtynn/dmail/utils"
+)
 
 var canonHeaders = map[string]func(h string) string{"simple": simpleHeader, "relaxed": relaxedHeader}
 var canonBody = map[string]func(body string) string{"simple": simpleBody, "relaxed": relaxedBody}
@@ -12,7 +16,7 @@ func simpleBody(body string) string {
 }
 
 func relaxedHeader(h string) string {
-	return compressWhitespace(strip(unfoldHeader(h)))
+	return compressWhitespace(utils.Strip(unfoldHeader(h)))
 }
 
 func relaxedBody(body string) string {

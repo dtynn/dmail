@@ -1,7 +1,9 @@
-package dmail
+package dkim
 
 import (
 	"strings"
+
+	"github.com/dtynn/dmail/message"
 )
 
 var headersMust = []string{
@@ -55,14 +57,14 @@ var headersFrozen = []string{
 }
 
 type dkimHeaders struct {
-	hs []header
+	hs []message.Header
 }
 
 func newDkimHeader() *dkimHeaders {
-	return &dkimHeaders{[]header{}}
+	return &dkimHeaders{[]message.Header{}}
 }
 
-func (this *dkimHeaders) append(h header) {
+func (this *dkimHeaders) append(h message.Header) {
 	this.hs = append(this.hs, h)
 }
 
@@ -85,9 +87,9 @@ func (this *dkimHeaders) frozen() []string {
 	return frozened
 }
 
-func (this *dkimHeaders) toHash() []header {
+func (this *dkimHeaders) toHash() []message.Header {
 	l := len(this.hs)
-	headersToHash := make([]header, l)
+	headersToHash := make([]message.Header, l)
 	lastIndex := map[string]int{}
 
 	for i, h := range this.hs {
@@ -100,7 +102,7 @@ func (this *dkimHeaders) toHash() []header {
 			last -= 1
 			if field == strings.ToLower(this.hs[last].Field()) {
 				lastIndex[field] = last
-				headersToHash[i] = &normalHeader{field, this.hs[last].Value()}
+				headersToHash[i] = message.NewNormalHeader(field, this.hs[last].Value())
 				break
 			}
 		}

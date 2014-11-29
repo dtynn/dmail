@@ -1,4 +1,4 @@
-package dmail
+package message
 
 import (
 	"bytes"

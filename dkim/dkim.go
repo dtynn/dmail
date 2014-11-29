@@ -1,4 +1,4 @@
-package dmail
+package dkim
 
 import (
 	"crypto/sha256"
@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dtynn/dmail/message"
 )
 
 var bBlank = ""
@@ -34,10 +36,11 @@ type dkim struct {
 
 	included *dkimHeaders
 	musts    map[string]bool
-	message  *Message
+	message  *message.Message
+	pemBytes []byte
 }
 
-func NewDefaultDkim(message *Message, domain, identity, selector string, setLength bool) *dkim {
+func NewDefaultDkim(message *message.Message, conf *DkimConf) *dkim {
 	c := canon{"relaxed", "simple"}
 	musts := map[string]bool{}
 	for _, must := range headersMust {
@@ -46,22 +49,23 @@ func NewDefaultDkim(message *Message, domain, identity, selector string, setLeng
 	return &dkim{
 		v:         "1",
 		a:         "rsa-sha256",
-		d:         domain,
-		i:         identity,
+		d:         conf.domain,
+		i:         conf.identity,
 		q:         "dns/txt",
-		s:         selector,
-		setLength: setLength,
+		s:         conf.selector,
+		setLength: conf.setLength,
 		c:         &c,
 		t:         time.Now().Unix(),
 
 		included: newDkimHeader(),
 		musts:    musts,
 		message:  message,
+		pemBytes: conf.pemBytes,
 	}
 }
 
 func (this *dkim) includeHeaders() {
-	for _, mh := range this.message.headers {
+	for _, mh := range this.message.Headers() {
 		field := strings.ToLower(mh.Field())
 		if isMust := stringIn(field, headersMust); isMust || stringIn(field, headersShould) {
 			// should sign
@@ -69,7 +73,7 @@ func (this *dkim) includeHeaders() {
 				this.musts[field] = true
 			}
 			canonicalizer, _ := canonHeaders[this.c.header]
-			this.included.append(&normalHeader{mh.Field(), canonicalizer(mh.Value())})
+			this.included.append(message.NewNormalHeader(mh.Field(), canonicalizer(mh.Value())))
 		}
 	}
 	return
@@ -134,7 +138,7 @@ func (this *dkim) checkMusts() bool {
 	return true
 }
 
-func (this *dkim) Sign(pemBytes []byte) (string, error) {
+func (this *dkim) Sign() (string, error) {
 	// get body and hash
 	this.hashBody()
 	// get headers
@@ -144,7 +148,7 @@ func (this *dkim) Sign(pemBytes []byte) (string, error) {
 		return "", fmt.Errorf("not all MUST headers included")
 	}
 
-	signer, err := newSigner(pemBytes)
+	signer, err := newSigner(this.pemBytes)
 	if err != nil {
 		return "", err
 	}
@@ -153,4 +157,13 @@ func (this *dkim) Sign(pemBytes []byte) (string, error) {
 		return "", err
 	}
 	return foldHeader(this.signature(bv)), nil
+}
+
+func (this *dkim) SignatureHeader() (message.Header, error) {
+	sig, err := this.Sign()
+	if err != nil {
+		return nil, err
+	}
+
+	return message.NewNormalHeader(DkimHeaderName, sig), nil
 }
