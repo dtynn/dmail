@@ -1,6 +1,7 @@
 package dmail
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"strings"
@@ -47,6 +48,16 @@ type fail struct {
 	Email, Detail string
 }
 
+type Fails []*fail
+
+func (this Fails) Error() string {
+	buf := bytes.NewBufferString("\n")
+	for _, f := range this {
+		buf.WriteString(fmt.Sprintf("%s: %s\n", f.Email, f.Detail))
+	}
+	return buf.String()
+}
+
 func NewSender(conf *senderConfig, dkimConf *dkim.DkimConf) *Sender {
 	s := Sender{
 		conf:     conf,
@@ -58,14 +69,13 @@ func NewSender(conf *senderConfig, dkimConf *dkim.DkimConf) *Sender {
 
 func (this *Sender) Send(from string, to []string, subject string, body string) error {
 	mail := NewMail(defaultContentType, from, to, subject, body)
-	_, err := this.SendMail(mail)
-	return err
+	return this.SendMail(mail)
 }
 
-func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
+func (this *Sender) SendMail(mail *Mail) error {
 	pieces := strings.Split(mail.From, "@")
 	if len(pieces) != 2 || pieces[0] == "" || pieces[1] == "" {
-		return nil, errInvalidFromAddress
+		return errInvalidFromAddress
 	}
 	msg := message.NewMessage(this.conf.encoding, this.conf.charset, mail.ContentType)
 	msg.AddContentType()
@@ -83,13 +93,13 @@ func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
 		d := dkim.NewDefaultDkim(msg, this.dkimConf)
 		header, err := d.SignatureHeader()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		msg.AddHeader(header)
 	}
 
 	b := msg.Bytes()
-	fails := make([]*fail, 0)
+	fails := Fails{}
 	for _, rcpt := range mail.To {
 		piece := strings.Split(rcpt, "@")
 		if len(piece) != 2 || piece[0] == "" || piece[1] == "" {
@@ -101,7 +111,10 @@ func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
 			fails = append(fails, &fail{rcpt, err.Error()})
 		}
 	}
-	return fails, nil
+	if len(fails) == 0 {
+		return nil
+	}
+	return fails
 }
 
 func (this *Sender) getMxHost(name string) (string, error) {
