@@ -23,24 +23,18 @@ const (
 )
 
 type senderConfig struct {
-	from      string
-	local     string
 	retry     int
 	encoding  message.Encoding
 	charset   message.Charset
 	enableTls bool
 }
 
-func NewSenderConfig(from string, retry int, encoding message.Encoding, charset message.Charset, enableTls bool) (*senderConfig, error) {
-	pieces := strings.Split(from, "@")
-	if len(pieces) != 2 || pieces[0] == "" || pieces[1] == "" {
-		return nil, errInvalidFromAddress
-	}
-	return &senderConfig{from, pieces[1], retry, encoding, charset, enableTls}, nil
+func NewSenderConfig(retry int, encoding message.Encoding, charset message.Charset, enableTls bool) *senderConfig {
+	return &senderConfig{retry, encoding, charset, enableTls}
 }
 
-func NewDefaultSenderConfig(from string, retry int, enableTls bool) (*senderConfig, error) {
-	return NewSenderConfig(from, retry, message.Base64, message.CharsetUTF8, enableTls)
+func NewDefaultSenderConfig(retry int, enableTls bool) *senderConfig {
+	return NewSenderConfig(retry, message.Base64, message.CharsetUTF8, enableTls)
 }
 
 type Sender struct {
@@ -62,19 +56,23 @@ func NewSender(conf *senderConfig, dkimConf *dkim.DkimConf) *Sender {
 	return &s
 }
 
-func (this *Sender) Send(to []string, subject string, body string) error {
-	mail := NewMail(defaultContentType, to, subject, body)
+func (this *Sender) Send(from string, to []string, subject string, body string) error {
+	mail := NewMail(defaultContentType, from, to, subject, body)
 	_, err := this.SendMail(mail)
 	return err
 }
 
 func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
+	pieces := strings.Split(mail.From, "@")
+	if len(pieces) != 2 || pieces[0] == "" || pieces[1] == "" {
+		return nil, errInvalidFromAddress
+	}
 	msg := message.NewMessage(this.conf.encoding, this.conf.charset, mail.ContentType)
 	msg.AddContentType()
 	msg.AddTransferEncodingHeader()
 	msg.AddDate()
 
-	msg.AddAddressHeader("From", this.conf.from, "")
+	msg.AddAddressHeader("From", mail.From, "")
 	for _, t := range mail.To {
 		msg.AddAddressHeader("To", t, "")
 	}
@@ -98,7 +96,7 @@ func (this *Sender) SendMail(mail *Mail) ([]*fail, error) {
 			fails = append(fails, &fail{rcpt, errInvalidRcptAddress.Error()})
 			continue
 		}
-		err := this.send(piece[1], []string{rcpt}, b)
+		err := this.send(piece[1], mail.From, []string{rcpt}, b)
 		if err != nil {
 			fails = append(fails, &fail{rcpt, err.Error()})
 		}
@@ -119,7 +117,8 @@ func (this *Sender) getMxHost(name string) (string, error) {
 	return mx.Host, nil
 }
 
-func (this *Sender) send(hostname string, to []string, msg []byte) error {
+func (this *Sender) send(hostname, from string, to []string, msg []byte) error {
+	local := strings.Split(from, "@")[1]
 	host, err := this.getMxHost(hostname)
 	if err != nil {
 		return err
@@ -136,10 +135,10 @@ func (this *Sender) send(hostname string, to []string, msg []byte) error {
 	}
 
 	log.Info("send: addr ", addr)
-	log.Info("send: local ", this.conf.local)
-	log.Info("send: from ", this.conf.from)
+	log.Info("send: local ", local)
+	log.Info("send: from ", from)
 	log.Info("send: to ", to)
 	log.Info("send: msg ", string(msg))
 	log.Info("send: tls", tlsConfig)
-	return smtp.SendEmail(addr, this.conf.local, this.conf.from, to, msg, tlsConfig)
+	return smtp.SendEmail(addr, local, from, to, msg, tlsConfig)
 }
