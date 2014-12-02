@@ -9,6 +9,7 @@ import (
 	"github.com/dtynn/dmail/dkim"
 	"github.com/dtynn/dmail/dns"
 	"github.com/dtynn/dmail/message"
+	. "github.com/dtynn/dmail/safeMap"
 	"github.com/dtynn/dmail/smtp"
 	"github.com/qiniu/log"
 )
@@ -41,7 +42,7 @@ func NewDefaultSenderConfig(retry int, enableTls bool) *senderConfig {
 type Sender struct {
 	conf     *senderConfig
 	dkimConf *dkim.DkimConf
-	dnsCache *safeMap
+	dnsCache *SafeMap
 }
 
 type fail struct {

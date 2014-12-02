@@ -1,0 +1,24 @@
+package server
+
+type Logger interface {
+	Debug(v ...interface{})
+	Debugf(format string, v ...interface{})
+	Info(v ...interface{})
+	Infof(format string, v ...interface{})
+	Warn(v ...interface{})
+	Warnf(format string, v ...interface{})
+	Error(v ...interface{})
+	Errorf(format string, v ...interface{})
+	Fatal(v ...interface{})
+	Fatalf(format string, v ...interface{})
+	Panic(v ...interface{})
+	Panicf(format string, v ...interface{})
+}
+
+type Receiver interface {
+	Init(id string) error
+	HandlerHost(host string) error
+	HandlerFrom(from string) error
+	HandlerRcpt(rcpt string) error
+	HandleData(data string) error
+}
