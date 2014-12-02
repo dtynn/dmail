@@ -14,7 +14,7 @@ func main() {
 	scfg.Timeout = 20
 
 	cfg := server.Config{}
-	cfg.Addr = "127.0.0.1:25"
+	cfg.Addr = "0.0.0.0:25"
 	cfg.Hostname = "localtest"
 	cfg.Verbose = true
 	cfg.SConf = &scfg
