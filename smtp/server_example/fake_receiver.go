@@ -2,19 +2,21 @@ package main
 
 import (
 	"github.com/dtynn/dmail/smtp/server"
+	"github.com/ian-kent/Go-MailHog/data"
 )
 
 type faker struct {
-	id                string
-	local, from, data string
-	rcpt              []string
+	id      string
+	message *data.SMTPMessage
 }
 
 func (this *faker) New(id string) (server.Receiver, error) {
 	l.Info("Faker New", id)
 	return &faker{
-		id:   id,
-		rcpt: []string{},
+		id: id,
+		message: &data.SMTPMessage{
+			To: []string{},
+		},
 	}, nil
 }
 
@@ -25,31 +27,33 @@ func (this *faker) Reset() error {
 
 func (this *faker) SetEhlo(local string) error {
 	l.Info("Faker Set Ehlo", local)
-	this.local = local
-	this.rcpt = []string{}
+	this.message.Helo = local
+	this.message.To = []string{}
 	return nil
 }
 
 func (this *faker) SetFrom(from string) error {
 	l.Info("Faker Set From", from)
-	this.from = from
+	this.message.From = from
 	return nil
 }
 
 func (this *faker) AddRcpt(rcpt string) error {
 	l.Info("Faker Add Rcpt", rcpt)
-	this.rcpt = append(this.rcpt, rcpt)
+	this.message.To = append(this.message.To, rcpt)
 	return nil
 }
 
 func (this *faker) SetData(data string) error {
 	l.Info("Faker Set Data Length", len(data))
-	this.data = data
+	this.message.Data = data
 	return nil
 }
 
 func (this *faker) Close() error {
-	l.Info(this.id, this.local, this.from, this.rcpt, len(this.data))
 	l.Info("Faker Closed")
+	parsed := this.message.Parse("dtynn.me")
+	l.Info("From: ", parsed.From.Domain, parsed.From.Mailbox, parsed.From.Params, parsed.From.Relays)
+	l.Info("Heaader: ", parsed.Content.Headers)
 	return nil
 }
