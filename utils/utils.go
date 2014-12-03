@@ -9,11 +9,15 @@ import (
 
 // header  \s \t \n
 
-var reBlank *regexp.Regexp
-var fws = "(?:(?:\\s*\r?\n)?\\s*)"
+var reBlank, reMail *regexp.Regexp
+var (
+	fwsPattern  = "(?:(?:\\s*\r?\n)?\\s*)"
+	mailPattern = "^<([\\w-]+(?:\\.[\\w-]+)*@(?:[\\w-]+\\.)+[a-zA-Z]+)>.*$"
+)
 
 func init() {
 	reBlank, _ = regexp.Compile("[\\s]+")
+	reMail, _ = regexp.Compile(mailPattern)
 }
 
 func Strip(s string) string {
@@ -48,4 +52,13 @@ func RandString(l int) string {
 		data[i] = byte(num)
 	}
 	return string(data)
+}
+
+func CutMail(s string) (string, bool) {
+	mail := ""
+	match := reMail.MatchString(s)
+	if match {
+		mail = reMail.ReplaceAllString(s, "$1")
+	}
+	return mail, match
 }

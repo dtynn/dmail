@@ -16,7 +16,7 @@ type Server struct {
 	cfg      *Config
 	l        Logger
 	sessions *safeMap.SafeMap
-	resps    *permanentResps
+	receiver Receiver
 }
 
 func NewServer(cfg *Config, l Logger) *Server {
@@ -50,9 +50,21 @@ func (this *Server) Run() error {
 			sessId = utils.RandString(sessionIdLength)
 			sess.id = sessId
 		}
+
+		if this.receiver != nil {
+			if r, err := this.receiver.New(sessId); err != nil {
+				this.l.Warn("receiver.New", err)
+			} else {
+				sess.registerRecevier(r)
+			}
+		}
 		go func(sess *session, sessions *safeMap.SafeMap) {
 			this.l.Info("session err:", sess.handle())
 			sessions.Del(sess.id)
 		}(sess, this.sessions)
 	}
+}
+
+func (this *Server) RegisterReceiver(r Receiver) {
+	this.receiver = r
 }

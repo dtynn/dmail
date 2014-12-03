@@ -21,21 +21,24 @@ const (
 )
 
 const (
-	cmdEhlo = "EHLO"
-	cmdHelo = "HELO"
-	cmdFrom = "MAIL FROM:"
-	cmdRcpt = "RCPT TO:"
-	cmdData = "DATA"
-	cmdTLS  = "STARTTLS"
-	cmdQuit = "QUIT"
+	cmdEhlo  = "EHLO"
+	cmdHelo  = "HELO"
+	cmdFrom  = "MAIL FROM:"
+	cmdRcpt  = "RCPT TO:"
+	cmdData  = "DATA"
+	cmdTLS   = "STARTTLS"
+	cmdQuit  = "QUIT"
+	cmdBlank = ""
 )
 
 var (
 	errDataSizeLimit = fmt.Errorf("size limit exceeded")
+	errTimeout       = fmt.Errorf("timeout")
 
 	ehloString = "250-%s\r\n250-SIZE %d\r\n"
 
-	minCmdLimit = 30
+	minCmdLimit       = 30
+	minTimeout  int64 = 10
 )
 
 type permanentResps struct {
@@ -47,16 +50,23 @@ type command struct {
 }
 
 type session struct {
-	id    string
-	l     Logger
-	conn  net.Conn
+	id   string
+	l    Logger
+	conn net.Conn
+	conf *Config
+	in   *bufio.Reader
+	out  *bufio.Writer
+
 	state int
 	local string
+	from  string
+	rcpt  []string
+	data  string
 
-	conf  *Config
-	in    *bufio.Reader
-	out   *bufio.Writer
-	resps *permanentResps
+	chErr    chan error
+	timer    *time.Timer
+	timeout  time.Duration
+	receiver Receiver
 }
 
 func newSession(id string, l Logger, conn net.Conn, conf *Config) *session {
@@ -64,53 +74,83 @@ func newSession(id string, l Logger, conn net.Conn, conf *Config) *session {
 		conf.SConf.CmdLimit = minCmdLimit
 	}
 
+	if conf.SConf.Timeout < minTimeout {
+		conf.SConf.Timeout = minTimeout
+	}
+
 	s := session{
 		id:   id,
 		l:    l,
 		conn: conn,
-
 		conf: conf,
 		in:   bufio.NewReader(conn),
 		out:  bufio.NewWriter(conn),
+
+		rcpt: make([]string, 0),
+
+		chErr:   make(chan error, 1),
+		timeout: time.Duration(conf.SConf.Timeout) * time.Second,
 	}
 	return &s
 }
 
+func (this *session) registerRecevier(r Receiver) {
+	this.receiver = r
+}
+
 func (this *session) handle() error {
-	defer this.conn.Close()
-	this.l.Info("handling")
+	this.timer = time.NewTimer(this.timeout)
+	defer this.cleanup()
+
+	go this.do()
+	for {
+		select {
+		case err := <-this.chErr:
+			return err
+		case <-this.timer.C:
+			this.sendResp(respTimeout)
+			this.l.Warnf("Id: %s timeout", this.id)
+			return errTimeout
+		}
+	}
+}
+
+func (this *session) do() {
 	if err := this.greeting(); err != nil {
-		return err
+		this.chErr <- err
 	}
 	for i := 0; i < this.conf.SConf.CmdLimit; i++ {
 		switch this.state {
 		case stateWaitForEhlo:
 			if err := this.handleWaitForEhlo(); err != nil {
-				return err
+				this.chErr <- err
 			}
 		case stateWaitForFrom:
 			if err := this.handleWaitForFrom(); err != nil {
-				return err
+				this.chErr <- err
 			}
 		case stateWaitForRcpt:
 			if err := this.hanldeWaitForRcpt(); err != nil {
-				return err
+				this.chErr <- err
 			}
 		case stateWaitForData:
 			if err := this.handleWaitForData(); err != nil {
-				return err
+				this.chErr <- err
 			}
 		case stateWriteData:
 			if err := this.handleData(); err != nil {
-				return err
+				this.chErr <- err
 			}
 		case stateAborted:
-			return this.sendResp(respClosing)
+			this.l.Info(this.id, "aborted")
+			this.chErr <- this.sendResp(respClosing)
 		case stateEnded:
 			break
 		}
 	}
-	return this.bye()
+	this.l.Infof("Id: %s From %s ; Rcpt: %s; Length: %d",
+		this.id, this.from, this.rcpt, len(this.data))
+	this.chErr <- this.bye()
 }
 
 func (this *session) read() (string, error) {
@@ -126,6 +166,7 @@ func (this *session) read() (string, error) {
 	var err error
 
 	for err == nil {
+		this.resetTimeout()
 		line, err = this.in.ReadString('\n')
 		if err != nil {
 			break
@@ -140,7 +181,6 @@ func (this *session) read() (string, error) {
 			break
 		}
 	}
-	this.l.Info("Read: ", text)
 	return text, err
 }
 
@@ -162,8 +202,6 @@ func (this *session) parseCmd(s string) *command {
 	} else {
 		cmd.cmd = utils.Strip(upper)
 	}
-	this.l.Info("cmd", cmd.cmd)
-	this.l.Info("param", cmd.parameter)
 	return &cmd
 }
 
@@ -178,6 +216,7 @@ func (this *session) getCmd() (*command, error) {
 
 func (this *session) writeString(s string) error {
 	_, err := this.out.WriteString(s)
+	this.resetTimeout()
 	return err
 }
 
@@ -201,9 +240,8 @@ func (this *session) sendResp(resp *smtpResponse) error {
 	return this.sendLine(resp.String())
 }
 
-func (this *session) setTimeout(timeout int64) error {
-	return this.conn.SetDeadline(time.Now().
-		Add(time.Duration(timeout) * time.Second))
+func (this *session) resetTimeout() bool {
+	return this.timer.Reset(this.timeout)
 }
 
 func (this *session) greeting() error {
@@ -219,6 +257,16 @@ func (this *session) bye() error {
 	return this.sendResp(respBye)
 }
 
+func (this *session) resetEhlo(local string) {
+	this.local = local
+	this.state = stateWaitForFrom
+	this.resetRcpt()
+}
+
+func (this *session) resetRcpt() {
+	this.rcpt = make([]string, 0)
+}
+
 func (this *session) handleWaitForEhlo() error {
 	cmd, err := this.getCmd()
 	if err != nil {
@@ -227,19 +275,13 @@ func (this *session) handleWaitForEhlo() error {
 
 	switch cmd.cmd {
 	case cmdEhlo, cmdHelo:
-		if len(cmd.parameter) == 0 {
-			this.sendResp(respSytaxErr)
-		}
-		if cmd.cmd == cmdEhlo {
-			this.writeString(fmt.Sprintf(ehloString,
-				this.conf.Hostname, this.conf.SConf.DataSizeLimit))
-		}
-		err = this.ok()
-		this.state = stateWaitForFrom
+		err = this.doCmdEhlo(cmd)
 	case cmdFrom, cmdRcpt, cmdTLS, cmdData:
 		err = this.sendResp(respEhloFirst)
 	case cmdQuit:
 		this.state = stateEnded
+	case cmdBlank:
+		break
 	default:
 		err = this.sendResp(respNotImplemented)
 	}
@@ -255,23 +297,9 @@ func (this *session) handleWaitForFrom() error {
 
 	switch cmd.cmd {
 	case cmdEhlo, cmdHelo:
-		if len(cmd.parameter) == 0 {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		if cmd.cmd == cmdEhlo {
-			this.writeString(fmt.Sprintf(ehloString,
-				this.conf.Hostname, this.conf.SConf.DataSizeLimit))
-		}
-		err = this.ok()
-		this.state = stateWaitForFrom
+		err = this.doCmdEhlo(cmd)
 	case cmdFrom:
-		if len(cmd.parameter) == 0 || !reMail.MatchString(cmd.parameter) {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		err = this.ok()
-		this.state = stateWaitForRcpt
+		err = this.doCmdFrom(cmd)
 	case cmdRcpt, cmdData:
 		err = this.sendResp(respBadSequense)
 	case cmdTLS:
@@ -279,6 +307,8 @@ func (this *session) handleWaitForFrom() error {
 		err = this.sendResp(respNotImplemented)
 	case cmdQuit:
 		this.state = stateEnded
+	case cmdBlank:
+		break
 	default:
 		err = this.sendResp(respNotImplemented)
 	}
@@ -293,27 +323,17 @@ func (this *session) hanldeWaitForRcpt() error {
 
 	switch cmd.cmd {
 	case cmdEhlo, cmdHelo:
-		if len(cmd.parameter) == 0 {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		if cmd.cmd == cmdEhlo {
-			this.writeString(fmt.Sprintf(ehloString,
-				this.conf.Hostname, this.conf.SConf.DataSizeLimit))
-		}
-		err = this.ok()
-		this.state = stateWaitForFrom
+		err = this.doCmdEhlo(cmd)
 	case cmdFrom, cmdData:
 		err = this.sendResp(respBadSequense)
 	case cmdRcpt:
-		if len(cmd.parameter) == 0 || !reMail.MatchString(cmd.parameter) {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		err = this.ok()
-		this.state = stateWaitForData
+		err = this.doCmdRcpt(cmd)
 	case cmdTLS:
 		err = this.sendResp(respEhloFirst)
+	case cmdBlank:
+		break
+	default:
+		err = this.sendResp(respNotImplemented)
 	}
 
 	return err
@@ -327,30 +347,18 @@ func (this *session) handleWaitForData() error {
 
 	switch cmd.cmd {
 	case cmdEhlo, cmdHelo:
-		if len(cmd.parameter) == 0 {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		if cmd.cmd == cmdEhlo {
-			this.writeString(fmt.Sprintf(ehloString,
-				this.conf.Hostname, this.conf.SConf.DataSizeLimit))
-		}
-		err = this.ok()
-		this.state = stateWaitForFrom
+		err = this.doCmdEhlo(cmd)
 	case cmdFrom:
 		err = this.sendResp(respBadSequense)
 	case cmdRcpt:
-		if len(cmd.parameter) == 0 || !reMail.MatchString(cmd.parameter) {
-			err = this.sendResp(respSytaxErr)
-			break
-		}
-		err = this.ok()
-		this.state = stateWaitForData
+		err = this.doCmdRcpt(cmd)
 	case cmdData:
 		err = this.sendResp(respReadyForData)
 		this.state = stateWriteData
 	case cmdTLS:
 		err = this.sendResp(respEhloFirst)
+	case cmdBlank:
+		break
 	default:
 		err = this.sendResp(respNotImplemented)
 	}
@@ -368,8 +376,77 @@ func (this *session) handleData() error {
 	if err != nil {
 		return err
 	}
-	this.l.Infof("\n%v", msg)
+
+	this.data = msg
+
+	if this.receiver != nil {
+		this.receiver.SetData(this.data)
+	}
+
 	err = this.sendResp(NewSmtpResponse(codeOK, "OK queued as "+this.id))
 	this.state = stateEnded
 	return err
+}
+
+func (this *session) doCmdEhlo(cmd *command) error {
+	if len(cmd.parameter) == 0 {
+		return this.sendResp(respSytaxErr)
+	}
+
+	if cmd.cmd == cmdEhlo {
+		this.writeString(fmt.Sprintf(ehloString,
+			this.conf.Hostname, this.conf.SConf.DataSizeLimit))
+	}
+
+	if this.receiver != nil {
+		if err := this.receiver.SetEhlo(cmd.parameter); err != nil {
+			// todo verbose
+		}
+	}
+
+	this.resetEhlo(cmd.parameter)
+	return this.ok()
+}
+
+func (this *session) doCmdFrom(cmd *command) error {
+	mail, match := utils.CutMail(cmd.parameter)
+	if !match {
+		return this.sendResp(respSytaxErr)
+	}
+	this.from = mail
+
+	if this.receiver != nil {
+		if err := this.receiver.SetFrom(this.from); err != nil {
+			// todo verbose
+		}
+	}
+
+	this.state = stateWaitForRcpt
+	return this.ok()
+}
+
+func (this *session) doCmdRcpt(cmd *command) error {
+	mail, match := utils.CutMail(cmd.parameter)
+	if !match {
+		return this.sendResp(respSytaxErr)
+	}
+
+	this.rcpt = append(this.rcpt, mail)
+
+	if this.receiver != nil {
+		if err := this.receiver.AddRcpt(mail); err != nil {
+			// todo verbose
+		}
+	}
+
+	this.state = stateWaitForData
+	return this.ok()
+}
+
+func (this *session) cleanup() {
+	this.conn.Close()
+	this.timer.Stop()
+	if this.receiver != nil {
+		this.receiver.Close()
+	}
 }

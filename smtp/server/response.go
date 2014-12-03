@@ -32,6 +32,7 @@ var (
 	respSizeLimitExceeded = NewSmtpResponse(
 		codeRequestNotTaken, "Size limit exceeded")
 	respClosing = NewSmtpResponse(codeTryAgain, "closing transmission channel")
+	respTimeout = NewSmtpResponse(codeTimeout, "action timeout")
 )
 
 type smtpResponse struct {

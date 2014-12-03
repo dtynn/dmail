@@ -16,9 +16,11 @@ type Logger interface {
 }
 
 type Receiver interface {
-	Init(id string) error
-	HandlerHost(host string) error
-	HandlerFrom(from string) error
-	HandlerRcpt(rcpt string) error
-	HandleData(data string) error
+	New(id string) (Receiver, error)
+	Reset() error
+	SetEhlo(local string) error
+	SetFrom(from string) error
+	AddRcpt(rcpt string) error
+	SetData(data string) error
+	Close() error
 }
