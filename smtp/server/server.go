@@ -34,6 +34,9 @@ func (this *Server) Run() error {
 		this.l.Warn("Listen err: ", err)
 		return err
 	}
+
+	this.l.Info("Listen on", this.cfg.Addr)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -59,7 +62,9 @@ func (this *Server) Run() error {
 			}
 		}
 		go func(sess *session, sessions *safeMap.SafeMap) {
-			this.l.Info("session err:", sess.handle())
+			if err := sess.handle(); err != nil {
+				this.logVerbose("Id:", sess.id, "session.handler", err)
+			}
 			sessions.Del(sess.id)
 		}(sess, this.sessions)
 	}
@@ -67,4 +72,10 @@ func (this *Server) Run() error {
 
 func (this *Server) RegisterReceiver(r Receiver) {
 	this.receiver = r
+}
+
+func (this *Server) logVerbose(v ...interface{}) {
+	if this.cfg.Verbose {
+		this.l.Info(v...)
+	}
 }

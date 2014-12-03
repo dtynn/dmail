@@ -109,7 +109,6 @@ func (this *session) handle() error {
 			return err
 		case <-this.timer.C:
 			this.sendResp(respTimeout)
-			this.l.Warnf("Id: %s timeout", this.id)
 			return errTimeout
 		}
 	}
@@ -148,8 +147,6 @@ func (this *session) do() {
 			break
 		}
 	}
-	this.l.Infof("Id: %s From %s ; Rcpt: %s; Length: %d",
-		this.id, this.from, this.rcpt, len(this.data))
 	this.chErr <- this.bye()
 }
 
@@ -380,7 +377,9 @@ func (this *session) handleData() error {
 	this.data = msg
 
 	if this.receiver != nil {
-		this.receiver.SetData(this.data)
+		if err := this.receiver.SetData(this.data); err != nil {
+			this.logVerbose("receiver.SetData", err)
+		}
 	}
 
 	err = this.sendResp(NewSmtpResponse(codeOK, "OK queued as "+this.id))
@@ -400,7 +399,7 @@ func (this *session) doCmdEhlo(cmd *command) error {
 
 	if this.receiver != nil {
 		if err := this.receiver.SetEhlo(cmd.parameter); err != nil {
-			// todo verbose
+			this.logVerbose("receiver.SetEhlo", err)
 		}
 	}
 
@@ -417,7 +416,7 @@ func (this *session) doCmdFrom(cmd *command) error {
 
 	if this.receiver != nil {
 		if err := this.receiver.SetFrom(this.from); err != nil {
-			// todo verbose
+			this.logVerbose("receiver.SetFrom", err)
 		}
 	}
 
@@ -435,7 +434,7 @@ func (this *session) doCmdRcpt(cmd *command) error {
 
 	if this.receiver != nil {
 		if err := this.receiver.AddRcpt(mail); err != nil {
-			// todo verbose
+			this.logVerbose("receiver.AddRcpt", err)
 		}
 	}
 
@@ -448,5 +447,11 @@ func (this *session) cleanup() {
 	this.timer.Stop()
 	if this.receiver != nil {
 		this.receiver.Close()
+	}
+}
+
+func (this *session) logVerbose(v ...interface{}) {
+	if this.conf.Verbose {
+		this.l.Info(v...)
 	}
 }
