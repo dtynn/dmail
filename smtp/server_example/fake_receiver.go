@@ -1,7 +1,11 @@
 package main
 
 import (
+	"io/ioutil"
+	"os"
+
 	"github.com/dtynn/dmail/smtp/server"
+	"github.com/dtynn/dmail/utils"
 	"github.com/ian-kent/Go-MailHog/data"
 )
 
@@ -47,6 +51,10 @@ func (this *faker) AddRcpt(rcpt string) error {
 func (this *faker) SetData(data string) error {
 	l.Info("Faker Set Data Length", len(data))
 	this.message.Data = data
+
+	filename := utils.RandString(10)
+	err := ioutil.WriteFile(filename, []byte(data), os.ModeAppend)
+	l.Info("output to file", filename, err)
 	return nil
 }
 
